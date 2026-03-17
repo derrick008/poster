@@ -4,13 +4,32 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>PMSmart</title>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@1,900&family=Noto+Sans+SC:wght@700;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-      @font-face { font-family: 'font-montserrat'; src: url('./fonts/数字字体.TTF') format('truetype'), url('./fonts/数字字体.otf') format('opentype'), local('Montserrat'); font-weight: 900; font-style: italic; font-display: swap; }
+      /* 中文字体：区域、销售、服务、类型、单位 */
+      @font-face {
+        font-family: 'font-chinese';
+        src: url('./fonts/汉字字体.otf') format('opentype'),
+             url('./fonts/汉字字体.OTF') format('opentype'),
+             url('./fonts/汉字字体.ttf') format('truetype');
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+      }
+      /* 数字字体：金额 */
+      @font-face {
+        font-family: 'font-number';
+        src: url('./fonts/数字字体.otf') format('opentype'),
+             url('./fonts/数字字体.OTF') format('opentype'),
+             url('./fonts/数字字体.TTF') format('truetype'),
+             url('./fonts/数字字体.ttf') format('truetype');
+        font-weight: 900;
+        font-style: italic;
+        font-display: swap;
+      }
       
       .loading-overlay { background: #020617; z-index: 200; }
       .result-overlay { 
@@ -33,6 +52,16 @@
         window.BG_CACHE = {}; 
         const COLORS = { blue: '#0067ea', purple: '#70378d', green: '#00802b', white: '#FFFFFF' };
 
+        const LAYOUT_STORAGE_KEY = 'pmsmart-layout';
+        const defaultLayout = {
+            region: {x: 15, y: 34.0, fontSize: 100, color: "#FFFFFF", align: "left"},
+            sales_names: {x: 15.5, y: 40.2, fontSize: 85, color: "#0067ea", align: "left"},
+            service_names: {x: 15.9, y: 45.8, fontSize: 85, color: "#0067ea", align: "left"},
+            typeLabel: {x: 15, y: 53.5, fontSize: 90, color: "#FFFFFF", align: "left"},
+            amount: {x: 49, y: 59, fontSize: 180, color: "#FFFFFF", align: "right", width: 806, height: 172, display: "flex", justifyContent: "center", alignItems: "flex-end", gap: 0}, 
+            unit: {x: 76.4, y: 64, fontSize: 60, color: "#FFFFFF", align: "left"}
+        };
+
         const App = () => {
             const [data, setData] = useState({ region: '湖北区域', sales: '张三', service: '服务：李四', amount: '58092' });
             const [category, setCategory] = useState('building');
@@ -44,18 +73,89 @@
             const [highResReady, setHighResReady] = useState({});
             const [debugMode, setDebugMode] = useState(false);
             const [clickCount, setClickCount] = useState(0);
+            const [editMode, setEditMode] = useState(false);
+            const [selectedKey, setSelectedKey] = useState(null);
+            const [layoutSaved, setLayoutSaved] = useState(false);
+            const dragRef = useRef({ key: null, startX: 0, startY: 0, startLayoutX: 0, startLayoutY: 0, moved: false });
+            const posterRef = useRef(null);
             
-            const [layout, setLayout] = useState({
-                region: {x: 15, y: 34.0, fontSize: 100, color: "#FFFFFF", align: "left"},
-                sales_names: {x: 15.5, y: 40.2, fontSize: 85, color: "#0067ea", align: "left"},
-                service_names: {x: 15.9, y: 45.8, fontSize: 85, color: "#0067ea", align: "left"},
-                typeLabel: {x: 15, y: 53.5, fontSize: 90, color: "#FFFFFF", align: "left"},
-                amount: {x: 49, y: 59, fontSize: 180, color: "#FFFFFF", align: "right", width: 806, height: 172, display: "flex", justifyContent: "center", alignItems: "flex-end", gap: 0}, 
-                unit: {x: 76.4, y: 64, fontSize: 60, color: "#FFFFFF", align: "left"}
-            });
+            const [layout, setLayout] = useState(defaultLayout);
 
             const exportCanvasRef = useRef(null);
             const mainRef = useRef(null);
+
+            const handleDragStart = useCallback((e, key) => {
+                if (!editMode) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                dragRef.current = { key, startX: clientX, startY: clientY, startLayoutX: layout[key].x, startLayoutY: layout[key].y, moved: false };
+            }, [editMode, layout]);
+
+            const handleDragMove = useCallback((e) => {
+                const d = dragRef.current;
+                if (!d || !d.key) return;
+                e.preventDefault();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                const dx = ((clientX - d.startX) / (1080 * pScale)) * 100;
+                const dy = ((clientY - d.startY) / (1920 * pScale)) * 100;
+                if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) { dragRef.current.moved = true; setSelectedKey(d.key); }
+                const newX = Math.max(0, Math.min(100, d.startLayoutX + dx));
+                const newY = Math.max(0, Math.min(100, d.startLayoutY + dy));
+                setLayout(prev => ({ ...prev, [d.key]: { ...prev[d.key], x: newX, y: newY } }));
+                dragRef.current = { ...d, startX: clientX, startY: clientY, startLayoutX: newX, startLayoutY: newY };
+            }, [pScale]);
+
+            const handleDragEnd = useCallback(() => { const m = dragRef.current.moved; dragRef.current = { key: null, startX: 0, startY: 0, startLayoutX: 0, startLayoutY: 0, moved: m }; }, []);
+
+            const handleTextClick = useCallback((e, key) => {
+                if (!editMode) return;
+                e.stopPropagation();
+                if (dragRef.current.moved) return;
+                setSelectedKey(prev => prev === key ? null : key);
+            }, [editMode]);
+
+            useEffect(() => {
+                if (!editMode) return;
+                window.addEventListener('mousemove', handleDragMove);
+                window.addEventListener('mouseup', handleDragEnd);
+                window.addEventListener('touchmove', handleDragMove, { passive: false });
+                window.addEventListener('touchend', handleDragEnd);
+                return () => {
+                    window.removeEventListener('mousemove', handleDragMove);
+                    window.removeEventListener('mouseup', handleDragEnd);
+                    window.removeEventListener('touchmove', handleDragMove);
+                    window.removeEventListener('touchend', handleDragEnd);
+                };
+            }, [editMode, handleDragMove, handleDragEnd]);
+
+            const updateLayoutFontSize = useCallback((key, delta) => {
+                setLayout(prev => {
+                    const l = prev[key];
+                    if (!l) return prev;
+                    const newSize = Math.max(12, Math.min(300, (l.fontSize || 60) + delta));
+                    return { ...prev, [key]: { ...l, fontSize: newSize } };
+                });
+            }, []);
+
+            const saveLayoutToStorage = useCallback(() => {
+                try {
+                    localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layout));
+                    setLayoutSaved(true);
+                    setTimeout(() => setLayoutSaved(false), 2000);
+                } catch (e) { alert('保存失败'); }
+            }, [layout]);
+
+            const downloadLayoutJson = useCallback(() => {
+                const blob = new Blob([JSON.stringify(layout, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'layout.json';
+                a.click();
+                URL.revokeObjectURL(a.href);
+            }, [layout]);
 
             const TEMPLATES = {
                 building: { name: '房建', types: { revenue: { bg: 'f1.jpg', color: COLORS.blue, title: '营收' }, contract: { bg: 'f2.jpg', color: COLORS.purple, title: '合同' }, actual: { bg: 'f3.jpg', color: COLORS.green, title: '实收' } } },
@@ -85,15 +185,21 @@
                 const init = async () => {
                     setLoadProgress(5);
                     try {
-                        const res = await fetch('/layout.json?v=' + Date.now(), { cache: 'no-store' });
-                        if (res.ok) {
-                            const remoteLayout = await res.json();
-                            if (remoteLayout && typeof remoteLayout === 'object' && Object.keys(remoteLayout).length > 0) setLayout(remoteLayout);
+                        const stored = localStorage.getItem(LAYOUT_STORAGE_KEY);
+                        if (stored) {
+                            const parsed = JSON.parse(stored);
+                            if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) setLayout(parsed);
+                        } else {
+                            const res = await fetch('./layout.json?v=' + Date.now(), { cache: 'no-store' });
+                            if (res.ok) {
+                                const remoteLayout = await res.json();
+                                if (remoteLayout && typeof remoteLayout === 'object' && Object.keys(remoteLayout).length > 0) setLayout(remoteLayout);
+                            }
                         }
                     } catch (e) {}
                     setLoadProgress(10);
-                    document.fonts.load('900 20px "Noto Sans SC"');
-                    document.fonts.load('italic 900 20px font-montserrat');
+                    document.fonts.load('700 20px "font-chinese"');
+                    document.fonts.load('italic 900 20px "font-number"');
                     const essentials = ['logo.jpg', 'f1-thumb.jpg', 'f2-thumb.jpg', 'f3-thumb.jpg', 'j1-thumb.jpg', 'j2-thumb.jpg', 'j3-thumb.jpg'];
                     const highRes = ['f1.jpg', 'f2.jpg', 'f3.jpg', 'j1.jpg', 'j2.jpg', 'j3.jpg'];
                     const total = essentials.length;
@@ -128,10 +234,11 @@
                     ctx.drawImage(fullImg, 0, 0, 1080, 1920);
                     Object.keys(layout).map(key => {
                         const l = layout[key];
+                        if (l.isImage) return;
                         ctx.save();
                         ctx.fillStyle = (key === 'sales_names' || key === 'service_names') ? current.color : (l.color || '#FFF');
                         const isItalic = ['amount','unit','typeLabel'].includes(key);
-                        const font = (key==='amount'||key==='unit') ? '"Montserrat", font-montserrat, sans-serif' : (['region','typeLabel','sales_names','service_names'].includes(key) ? '"Noto Sans SC", sans-serif' : 'sans-serif');
+                        const font = (key==='amount'||key==='unit') ? '"font-number", sans-serif' : (['region','typeLabel','sales_names','service_names'].includes(key) ? '"font-chinese", sans-serif' : '"font-chinese", sans-serif');
                         ctx.font = `${isItalic ? 'italic ' : ''}bold ${l.fontSize}px ${font}`;
                         ctx.textAlign = (key === 'amount') ? 'right' : (l.align || "left"); 
                         ctx.textBaseline = 'top';
@@ -199,20 +306,34 @@
                            <div className="w-px h-3 bg-slate-700 mx-1"></div>
                            <span className="text-base font-black text-slate-400 uppercase tracking-widest">捷报手机版</span>
                         </div>
-                        <div className="flex bg-slate-800 rounded-lg p-0.5">
-                            {Object.keys(TEMPLATES).map(k => (
-                                <button key={k} onClick={() => setCategory(k)} className={`px-6 py-1.5 rounded-md text-sm font-black transition-all min-w-[64px] ${category === k ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{TEMPLATES[k].name}</button>
-                            ))}
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => { setEditMode(e => !e); setSelectedKey(null); }} className={`px-3 py-1.5 rounded-md text-xs font-bold ${editMode ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>
+                                {editMode ? '完成编辑' : '编辑布局'}
+                            </button>
+                            <div className="flex bg-slate-800 rounded-lg p-0.5">
+                                {Object.keys(TEMPLATES).map(k => (
+                                    <button key={k} onClick={() => setCategory(k)} className={`px-6 py-1.5 rounded-md text-sm font-black transition-all min-w-[64px] ${category === k ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{TEMPLATES[k].name}</button>
+                                ))}
+                            </div>
                         </div>
                     </header>
 
+                    {editMode && selectedKey && (
+                        <div className="absolute left-4 top-16 z-50 bg-slate-800/95 border border-white/10 rounded-lg p-2 flex items-center gap-2 shadow-xl">
+                            <span className="text-xs text-slate-400 font-bold">{selectedKey}</span>
+                            <button onClick={() => updateLayoutFontSize(selectedKey, -4)} className="w-8 h-8 rounded bg-slate-700 text-white font-black text-lg leading-none">−</button>
+                            <span className="text-xs text-white font-mono min-w-[36px]">{layout[selectedKey]?.fontSize || 60}px</span>
+                            <button onClick={() => updateLayoutFontSize(selectedKey, 4)} className="w-8 h-8 rounded bg-slate-700 text-white font-black text-lg leading-none">+</button>
+                        </div>
+                    )}
+
                     <main ref={mainRef} className="flex-1 relative flex items-center justify-center p-5 min-h-0">
-                        <div className="poster-container relative overflow-hidden m-4" style={{ width: `${1080 * pScale}px`, height: `${1920 * pScale}px` }}>
+                        <div ref={posterRef} onClick={() => editMode && setSelectedKey(null)} className="poster-container relative overflow-hidden m-4" style={{ width: `${1080 * pScale}px`, height: `${1920 * pScale}px` }}>
                             {(window.BG_CACHE[current.bg] || window.BG_CACHE[current.bg.replace('.jpg', '-thumb.jpg')]) && (
                                 <img src={(window.BG_CACHE[current.bg] || window.BG_CACHE[current.bg.replace('.jpg', '-thumb.jpg')]).src} className="absolute inset-0 w-full h-full" />
                             )}
                             <div className="absolute inset-0 origin-top-left" style={{ transform: `scale(${pScale})`, width: '1080px', height: '1920px' }}>
-                                {Object.keys(layout).map(key => {
+                                {Object.keys(layout).filter(k => !layout[k]?.isImage).map(key => {
                                     const l = layout[key];
                                     let content = "";
                                     if(key==='region') content = data.region;
@@ -221,24 +342,31 @@
                                     else if(key==='typeLabel') content = current.title;
                                     else if(key==='amount') content = data.amount;
                                     else if(key==='unit') content = "元";
+                                    const isSelected = selectedKey === key;
 
                                     return (
-                                        <div key={key} className="absolute" style={{
-                                            left: `${l.x}%`, top: `${l.y}%`,
-                                            color: (key === 'sales_names' || key === 'service_names') ? current.color : (l.color || '#FFF'),
-                                            fontSize: `${l.fontSize}px`, 
-                                            fontFamily: (key==='amount'||key==='unit') ? '"Montserrat", font-montserrat, sans-serif' : (['region','typeLabel','sales_names','service_names'].includes(key) ? '"Noto Sans SC", sans-serif' : 'sans-serif'),
-                                            fontStyle: ['amount','unit','typeLabel'].includes(key)?'italic':'normal',
-                                            fontWeight: 'bold',
-                                            transform: (key === 'amount' || l.align === 'right') ? 'translateX(-100%)' : (l.align === 'center' ? 'translateX(-50%)' : 'none'),
-                                            whiteSpace: 'nowrap', lineHeight: 1,
-                                            ...(l.width != null ? { width: l.width + 'px' } : {}),
-                                            ...(l.height != null ? { height: l.height + 'px' } : {}),
-                                            ...(l.display ? { display: l.display } : {}),
-                                            ...(l.justifyContent ? { justifyContent: l.justifyContent } : {}),
-                                            ...(l.alignItems ? { alignItems: l.alignItems } : {}),
-                                            ...(l.gap !== undefined ? { gap: l.gap + 'px' } : {})
-                                        }}>{content}</div>
+                                        <div key={key}
+                                            onMouseDown={e => handleDragStart(e, key)}
+                                            onTouchStart={e => handleDragStart(e, key)}
+                                            onClick={e => handleTextClick(e, key)}
+                                            className={`absolute ${editMode ? 'cursor-move touch-none' : ''}`}
+                                            style={{
+                                                left: `${l.x}%`, top: `${l.y}%`,
+                                                color: (key === 'sales_names' || key === 'service_names') ? current.color : (l.color || '#FFF'),
+                                                fontSize: `${l.fontSize || 60}px`, 
+                                                fontFamily: (key==='amount'||key==='unit') ? '"font-number", sans-serif' : '"font-chinese", sans-serif',
+                                                fontStyle: ['amount','unit','typeLabel'].includes(key)?'italic':'normal',
+                                                fontWeight: 'bold',
+                                                transform: (key === 'amount' || l.align === 'right') ? 'translateX(-100%)' : (l.align === 'center' ? 'translateX(-50%)' : 'none'),
+                                                whiteSpace: 'nowrap', lineHeight: 1,
+                                                ...(editMode ? { outline: isSelected ? '2px solid #3b82f6' : '1px dashed rgba(255,255,255,0.3)' } : {}),
+                                                ...(l.width != null ? { width: l.width + 'px' } : {}),
+                                                ...(l.height != null ? { height: l.height + 'px' } : {}),
+                                                ...(l.display ? { display: l.display } : {}),
+                                                ...(l.justifyContent ? { justifyContent: l.justifyContent } : {}),
+                                                ...(l.alignItems ? { alignItems: l.alignItems } : {}),
+                                                ...(l.gap !== undefined ? { gap: l.gap + 'px' } : {})
+                                            }}>{content}</div>
                                     );
                                 })}
                             </div>
@@ -255,11 +383,23 @@
                             <input type="text" value={data.region} onChange={e => setData({...data, region: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:border-blue-500 focus:ring-0" />
                             <input type="text" value={data.sales} onChange={e => setData({...data, sales: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:border-blue-500 focus:ring-0" />
                             <input type="text" value={data.service} onChange={e => setData({...data, service: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:border-blue-500 focus:ring-0" />
-                            <input type="text" value={data.amount} onChange={e => setData({...data, amount: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm font-black text-yellow-500 text-center outline-none focus:border-yellow-500/50 focus:ring-0" style={{ fontFamily: '"Montserrat", font-montserrat, sans-serif' }} />
+                            <input type="text" value={data.amount} onChange={e => setData({...data, amount: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm font-black text-yellow-500 text-center outline-none focus:border-yellow-500/50 focus:ring-0" style={{ fontFamily: '"font-number", sans-serif' }} />
                         </div>
-                        <button onClick={handleExport} className={`w-full py-2 rounded-lg font-black text-sm tracking-widest shadow-xl transition-all ${highResReady[current.bg] ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
-                            {highResReady[current.bg] ? "生成高清捷报" : "PMSmart数据同步中..."}
-                        </button>
+                        <div className="flex gap-1">
+                            {editMode && (
+                                <>
+                                    <button onClick={saveLayoutToStorage} className="flex-1 py-2 rounded-lg font-bold text-xs bg-amber-600/80 hover:bg-amber-600 text-white">
+                                        {layoutSaved ? '✓ 已保存' : '保存布局'}
+                                    </button>
+                                    <button onClick={downloadLayoutJson} className="flex-1 py-2 rounded-lg font-bold text-xs bg-slate-700 hover:bg-slate-600 text-slate-300">
+                                        下载 layout.json
+                                    </button>
+                                </>
+                            )}
+                            <button onClick={handleExport} className={`${editMode ? 'flex-1' : 'w-full'} py-2 rounded-lg font-black text-sm tracking-widest shadow-xl transition-all ${highResReady[current.bg] ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                                {highResReady[current.bg] ? "生成高清捷报" : "PMSmart数据同步中..."}
+                            </button>
+                        </div>
                         <div onClick={() => { setClickCount(c => c + 1); if(clickCount >= 4) { setDebugMode(true); setClickCount(0); } }} className="text-center text-[8px] text-slate-600 font-bold uppercase tracking-widest cursor-pointer">Designed by Derrick</div>
                     </footer>
 
