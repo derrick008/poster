@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>PMSmart</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@1,900&family=Noto+Sans+SC:wght@700;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      @font-face { font-family: 'font-montserrat'; src: url('./fonts/数字字体.TTF') format('truetype'), url('./fonts/数字字体.otf') format('opentype'), local('Montserrat'); font-weight: 900; font-style: italic; font-display: swap; }
+      
+      .loading-overlay { background: #020617; z-index: 200; }
+      .result-overlay { 
+        background: rgba(0, 0, 0, 0.96); 
+        backdrop-filter: blur(20px); 
+        -webkit-backdrop-filter: blur(20px);
+        z-index: 150; 
+      }
+
+      .spin { animation: spin 1s linear infinite; }
+      @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      .poster-container { background: #000; border: 1px solid rgba(255,255,255,0.1); transform: translateZ(0); -webkit-transform: translateZ(0); }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 overflow-hidden select-none font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect, useCallback } = React;
+        window.BG_CACHE = {}; 
+        const COLORS = { blue: '#0067ea', purple: '#70378d', green: '#00802b', white: '#FFFFFF' };
+
+        const App = () => {
+            const [data, setData] = useState({ region: '湖北区域', sales: '张三', service: '服务：李四', amount: '58092' });
+            const [category, setCategory] = useState('building');
+            const [subType, setSubType] = useState('actual');
+            const [isSaving, setIsSaving] = useState(false);
+            const [resultImg, setResultImg] = useState(null);
+            const [appReady, setAppReady] = useState(false);
+            const [loadProgress, setLoadProgress] = useState(0);
+            const [highResReady, setHighResReady] = useState({});
+            const [debugMode, setDebugMode] = useState(false);
+            const [clickCount, setClickCount] = useState(0);
+            
+            const [layout, setLayout] = useState({
+                region: {x: 15, y: 34.0, fontSize: 100, color: "#FFFFFF", align: "left"},
+                sales_names: {x: 15.5, y: 40.2, fontSize: 85, color: "#0067ea", align: "left"},
+                service_names: {x: 15.9, y: 45.8, fontSize: 85, color: "#0067ea", align: "left"},
+                typeLabel: {x: 15, y: 53.5, fontSize: 90, color: "#FFFFFF", align: "left"},
+                amount: {x: 49, y: 59, fontSize: 180, color: "#FFFFFF", align: "right", width: 806, height: 172, display: "flex", justifyContent: "center", alignItems: "flex-end", gap: 0}, 
+                unit: {x: 76.4, y: 64, fontSize: 60, color: "#FFFFFF", align: "left"}
+            });
+
+            const exportCanvasRef = useRef(null);
+            const mainRef = useRef(null);
+
+            const TEMPLATES = {
+                building: { name: '房建', types: { revenue: { bg: 'f1.jpg', color: COLORS.blue, title: '营收' }, contract: { bg: 'f2.jpg', color: COLORS.purple, title: '合同' }, actual: { bg: 'f3.jpg', color: COLORS.green, title: '实收' } } },
+                infrastructure: { name: '基建', types: { revenue: { bg: 'j1.jpg', color: COLORS.blue, title: '营收' }, contract: { bg: 'j2.jpg', color: COLORS.purple, title: '合同' }, actual: { bg: 'j3.jpg', color: COLORS.green, title: '实收' } } }
+            };
+            const current = TEMPLATES[category].types[subType];
+
+            const [pScale, setPScale] = useState(0.35);
+            useEffect(() => {
+                const calcScale = () => {
+                    const headerH = 52;
+                    const footerH = 130;
+                    const availH = Math.max(200, (window.visualViewport?.height || window.innerHeight) - headerH - footerH - 48);
+                    const availW = window.innerWidth - 64;
+                    setPScale(Math.min(availW / 1080, availH / 1920));
+                };
+                calcScale();
+                window.addEventListener('resize', calcScale);
+                if (window.visualViewport) window.visualViewport.addEventListener('resize', calcScale);
+                return () => {
+                    window.removeEventListener('resize', calcScale);
+                    if (window.visualViewport) window.visualViewport.removeEventListener('resize', calcScale);
+                };
+            }, []);
+
+            useEffect(() => {
+                const init = async () => {
+                    setLoadProgress(5);
+                    try {
+                        const res = await fetch('/layout.json?v=' + Date.now(), { cache: 'no-store' });
+                        if (res.ok) {
+                            const remoteLayout = await res.json();
+                            if (remoteLayout && typeof remoteLayout === 'object' && Object.keys(remoteLayout).length > 0) setLayout(remoteLayout);
+                        }
+                    } catch (e) {}
+                    setLoadProgress(10);
+                    document.fonts.load('900 20px "Noto Sans SC"');
+                    document.fonts.load('italic 900 20px font-montserrat');
+                    const essentials = ['logo.jpg', 'f1-thumb.jpg', 'f2-thumb.jpg', 'f3-thumb.jpg', 'j1-thumb.jpg', 'j2-thumb.jpg', 'j3-thumb.jpg'];
+                    const highRes = ['f1.jpg', 'f2.jpg', 'f3.jpg', 'j1.jpg', 'j2.jpg', 'j3.jpg'];
+                    const total = essentials.length;
+                    for (let i = 0; i < essentials.length; i++) {
+                        const f = essentials[i];
+                        const img = new Image();
+                        img.src = `./assets/${f}`;
+                        await new Promise(r => { img.onload = () => { window.BG_CACHE[f] = img; r(); }; img.onerror = r; });
+                        setLoadProgress(10 + Math.round(((i + 1) / total) * 85));
+                    }
+                    setLoadProgress(100);
+                    setAppReady(true);
+                    highRes.forEach(f => {
+                        const img = new Image();
+                        img.src = `./assets/${f}`;
+                        img.onload = () => {
+                            window.BG_CACHE[f] = img;
+                            setHighResReady(prev => ({...prev, [f]: true}));
+                        };
+                    });
+                };
+                init();
+            }, []);
+
+            const handleExport = () => {
+                const fullImg = window.BG_CACHE[current.bg];
+                if (!fullImg) return;
+                setIsSaving(true);
+                setTimeout(() => {
+                    const canvas = exportCanvasRef.current;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(fullImg, 0, 0, 1080, 1920);
+                    Object.keys(layout).map(key => {
+                        const l = layout[key];
+                        ctx.save();
+                        ctx.fillStyle = (key === 'sales_names' || key === 'service_names') ? current.color : (l.color || '#FFF');
+                        const isItalic = ['amount','unit','typeLabel'].includes(key);
+                        const font = (key==='amount'||key==='unit') ? '"Montserrat", font-montserrat, sans-serif' : (['region','typeLabel','sales_names','service_names'].includes(key) ? '"Noto Sans SC", sans-serif' : 'sans-serif');
+                        ctx.font = `${isItalic ? 'italic ' : ''}bold ${l.fontSize}px ${font}`;
+                        ctx.textAlign = (key === 'amount') ? 'right' : (l.align || "left"); 
+                        ctx.textBaseline = 'top';
+                        let text = "";
+                        if(key==='region') text = data.region;
+                        else if(key==='sales_names') text = `销售：${data.sales}`;
+                        else if(key==='service_names') text = data.service;
+                        else if(key==='typeLabel') text = current.title;
+                        else if(key==='amount') text = data.amount;
+                        else if(key==='unit') text = "元";
+                        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                        const yOffset = isIOS ? ((key === 'amount' || key === 'unit') ? 10 : (key === 'service_names' ? 4 : 0)) : ((key === 'amount' || key === 'unit') ? 10 : 4);
+                        ctx.fillText(text, (l.x / 100) * 1080, (l.y / 100) * 1920 + yOffset);
+                        ctx.restore();
+                    });
+                    setResultImg(canvas.toDataURL('image/jpeg', 0.95));
+                    setIsSaving(false);
+                }, 150);
+            };
+
+            return (
+                <div className="flex flex-col bg-slate-950 overflow-y-auto" style={{ minHeight: '100dvh', height: '100dvh' }}>
+                    {!appReady && (
+                        <div className="fixed inset-0 z-[200] loading-overlay flex flex-col items-center justify-center">
+                            <div className="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full spin mb-4"></div>
+                            <p className="text-blue-500 font-bold text-sm tracking-widest mb-1">PMSmart 加载中</p>
+                            <p className="text-blue-400/80 font-bold text-lg">{loadProgress}%</p>
+                        </div>
+                    )}
+
+                    {isSaving && (
+                        <div className="fixed inset-0 z-[160] bg-slate-950/90 flex flex-col items-center justify-center text-white">
+                            <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full spin mb-2"></div>
+                            <p className="text-[10px] font-bold tracking-widest uppercase">渲染高清版...</p>
+                        </div>
+                    )}
+
+                    {/* 结果显示层 */}
+                    {resultImg && (
+                        <div className="fixed inset-0 result-overlay flex flex-col items-center justify-center p-6" onClick={() => setResultImg(null)}>
+                            <div className="relative poster-container rounded-lg overflow-hidden animate-in zoom-in-95 duration-300 m-4">
+                                <img src={resultImg} className="max-h-[70vh] w-auto block" />
+                            </div>
+                            
+                            {/* 调整后的文字位置：图片下方，按钮上方 */}
+                            <div className="mt-6 flex flex-col items-center gap-5 w-full max-w-[280px]">
+                                <div className="flex flex-col items-center gap-1">
+                                    <p className="text-blue-400 font-black text-center animate-pulse text-sm tracking-widest">长按上方喜报保存</p>
+                                    <div className="w-8 h-0.5 bg-blue-500/30 rounded-full"></div>
+                                </div>
+
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); setResultImg(null); }}
+                                    className="w-full bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 py-3.5 rounded-2xl font-bold text-xs transition-all active:scale-95"
+                                >
+                                    返回继续修改
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    
+                    <header className="flex-none h-12 flex justify-between items-center px-3 bg-slate-900/95 border-b border-white/5 shrink-0">
+                        <div className="flex items-center gap-2">
+                           {window.BG_CACHE['logo.jpg'] && <img src={window.BG_CACHE['logo.jpg'].src} className="h-7 w-auto object-contain" />}
+                           <div className="w-px h-3 bg-slate-700 mx-1"></div>
+                           <span className="text-base font-black text-slate-400 uppercase tracking-widest">捷报手机版</span>
+                        </div>
+                        <div className="flex bg-slate-800 rounded-lg p-0.5">
+                            {Object.keys(TEMPLATES).map(k => (
+                                <button key={k} onClick={() => setCategory(k)} className={`px-6 py-1.5 rounded-md text-sm font-black transition-all min-w-[64px] ${category === k ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>{TEMPLATES[k].name}</button>
+                            ))}
+                        </div>
+                    </header>
+
+                    <main ref={mainRef} className="flex-1 relative flex items-center justify-center p-5 min-h-0">
+                        <div className="poster-container relative overflow-hidden m-4" style={{ width: `${1080 * pScale}px`, height: `${1920 * pScale}px` }}>
+                            {(window.BG_CACHE[current.bg] || window.BG_CACHE[current.bg.replace('.jpg', '-thumb.jpg')]) && (
+                                <img src={(window.BG_CACHE[current.bg] || window.BG_CACHE[current.bg.replace('.jpg', '-thumb.jpg')]).src} className="absolute inset-0 w-full h-full" />
+                            )}
+                            <div className="absolute inset-0 origin-top-left" style={{ transform: `scale(${pScale})`, width: '1080px', height: '1920px' }}>
+                                {Object.keys(layout).map(key => {
+                                    const l = layout[key];
+                                    let content = "";
+                                    if(key==='region') content = data.region;
+                                    else if(key==='sales_names') content = `销售：${data.sales}`;
+                                    else if(key==='service_names') content = data.service;
+                                    else if(key==='typeLabel') content = current.title;
+                                    else if(key==='amount') content = data.amount;
+                                    else if(key==='unit') content = "元";
+
+                                    return (
+                                        <div key={key} className="absolute" style={{
+                                            left: `${l.x}%`, top: `${l.y}%`,
+                                            color: (key === 'sales_names' || key === 'service_names') ? current.color : (l.color || '#FFF'),
+                                            fontSize: `${l.fontSize}px`, 
+                                            fontFamily: (key==='amount'||key==='unit') ? '"Montserrat", font-montserrat, sans-serif' : (['region','typeLabel','sales_names','service_names'].includes(key) ? '"Noto Sans SC", sans-serif' : 'sans-serif'),
+                                            fontStyle: ['amount','unit','typeLabel'].includes(key)?'italic':'normal',
+                                            fontWeight: 'bold',
+                                            transform: (key === 'amount' || l.align === 'right') ? 'translateX(-100%)' : (l.align === 'center' ? 'translateX(-50%)' : 'none'),
+                                            whiteSpace: 'nowrap', lineHeight: 1,
+                                            ...(l.width != null ? { width: l.width + 'px' } : {}),
+                                            ...(l.height != null ? { height: l.height + 'px' } : {}),
+                                            ...(l.display ? { display: l.display } : {}),
+                                            ...(l.justifyContent ? { justifyContent: l.justifyContent } : {}),
+                                            ...(l.alignItems ? { alignItems: l.alignItems } : {}),
+                                            ...(l.gap !== undefined ? { gap: l.gap + 'px' } : {})
+                                        }}>{content}</div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        <div className="absolute right-3 flex flex-col gap-3">
+                            {Object.keys(TEMPLATES[category].types).map(tk => (
+                                <button key={tk} onClick={() => setSubType(tk)} className={`w-11 h-11 rounded-full border-2 flex items-center justify-center text-[10px] font-black transition-all ${subType === tk ? 'bg-blue-600 border-blue-400 text-white shadow-xl' : 'bg-slate-900/80 border-white/10 text-slate-500'}`}>{TEMPLATES[category].types[tk].title}</button>
+                            ))}
+                        </div>
+                    </main>
+
+                    <footer className="flex-none bg-slate-900/90 border-t border-white/5 p-1.5 space-y-1.5 shrink-0" style={{ paddingBottom: 'max(0.375rem, env(safe-area-inset-bottom))' }}>
+                        <div className="grid grid-cols-2 gap-1">
+                            <input type="text" value={data.region} onChange={e => setData({...data, region: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:border-blue-500 focus:ring-0" />
+                            <input type="text" value={data.sales} onChange={e => setData({...data, sales: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:border-blue-500 focus:ring-0" />
+                            <input type="text" value={data.service} onChange={e => setData({...data, service: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm text-center outline-none focus:border-blue-500 focus:ring-0" />
+                            <input type="text" value={data.amount} onChange={e => setData({...data, amount: e.target.value})} className="bg-slate-800/80 border-2 border-slate-600 rounded-lg px-2 py-1.5 text-sm font-black text-yellow-500 text-center outline-none focus:border-yellow-500/50 focus:ring-0" style={{ fontFamily: '"Montserrat", font-montserrat, sans-serif' }} />
+                        </div>
+                        <button onClick={handleExport} className={`w-full py-2 rounded-lg font-black text-sm tracking-widest shadow-xl transition-all ${highResReady[current.bg] ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
+                            {highResReady[current.bg] ? "生成高清捷报" : "PMSmart数据同步中..."}
+                        </button>
+                        <div onClick={() => { setClickCount(c => c + 1); if(clickCount >= 4) { setDebugMode(true); setClickCount(0); } }} className="text-center text-[8px] text-slate-600 font-bold uppercase tracking-widest cursor-pointer">Designed by Derrick</div>
+                    </footer>
+
+                    {debugMode && (
+                        <div className="fixed inset-0 z-[300] bg-black/95 flex flex-col p-6 overflow-auto">
+                            <div className="flex justify-between items-center mb-4 text-white">
+                                <h3 className="font-bold">开发者布局 JSON</h3>
+                                <button onClick={() => setDebugMode(false)} className="bg-red-600 px-4 py-1 rounded text-xs">关闭</button>
+                            </div>
+                            <textarea readOnly value={JSON.stringify(layout, null, 2)} className="flex-1 bg-black border border-white/10 p-4 text-green-500 font-mono text-[10px]" />
+                        </div>
+                    )}
+
+                    <canvas ref={exportCanvasRef} width="1080" height="1920" style={{display:'none'}}></canvas>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
